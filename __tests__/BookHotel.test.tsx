@@ -15,7 +15,7 @@ import BookHotel from "../app/city/[cityId]/book";
 describe("BookHotel screen", () => {
   it("updates the name input when text is entered", () => {
     const { getByPlaceholderText } = render(<BookHotel />);
-    const nameInput = getByPlaceholderText("Your Name");
+    const nameInput = getByPlaceholderText("Your name");
 
     fireEvent.changeText(nameInput, "Aditya");
     expect(nameInput.props.value).toBe("Aditya");
@@ -23,6 +23,6 @@ describe("BookHotel screen", () => {
 
   it("renders the confirm booking button", () => {
     const { getByText } = render(<BookHotel />);
-    expect(getByText("Confirm Booking")).toBeTruthy();
+    expect(getByText("Confirm booking")).toBeTruthy();
   });
 });
