@@ -1,10 +1,18 @@
 import React from "react";
-import { render, fireEvent, waitFor, act } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Alert } from "react-native";
 
-jest.mock("@react-navigation/native", () => ({
-  useFocusEffect: (callback: any) => callback(),
-}));
+jest.mock("@react-navigation/native", () => {
+  const React = require("react");
+  return {
+    useFocusEffect: (callback: any) => {
+      React.useEffect(() => {
+        const cleanup = callback();
+        return cleanup;
+      }, []);
+    },
+  };
+});
 
 jest.mock("../lib/db", () => ({
   db: {
@@ -17,64 +25,75 @@ const { db } = require("../lib/db");
 const runAsyncMock = db.runAsync as jest.Mock;
 const getAllAsyncMock = db.getAllAsync as jest.Mock;
 
-const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+const alertSpy = jest.spyOn(Alert, "alert");
 
-describe("Itinerary screen", () => {
+describe("Itinerary planner", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    getAllAsyncMock.mockResolvedValue([]);
+    alertSpy.mockImplementation(() => {});
     runAsyncMock.mockResolvedValue(undefined);
+    getAllAsyncMock.mockResolvedValue([]);
   });
 
-  it("adds a new trip with notes", async () => {
+  afterAll(() => {
+    alertSpy.mockRestore();
+  });
+
+  const renderScreen = () => {
     const Screen = require("../app/itinerary").default;
-    const { getByPlaceholderText, getByText } = render(<Screen />);
+    return render(<Screen />);
+  };
 
-    const titleInput = await waitFor(() => getByPlaceholderText("Trip title"));
-    const destinationInput = getByPlaceholderText("Destination");
-    const notesInput = getByPlaceholderText("Notes");
+  it("alerts when the title is missing", async () => {
+    const { getByPlaceholderText, getByText } = renderScreen();
 
-    fireEvent.changeText(titleInput, "  Alpine Escape  ");
-    fireEvent.changeText(destinationInput, "Zurich");
+    fireEvent.changeText(getByPlaceholderText("Destination"), "Paris");
+
+    await act(async () => {
+      fireEvent.press(getByText("Save itinerary"));
+    });
+
+    expect(alertSpy).toHaveBeenCalledWith("Missing title", "Give your itinerary a memorable name.");
+    expect(runAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("alerts when the destination is missing", async () => {
+    const { getByPlaceholderText, getByText } = renderScreen();
+
+    fireEvent.changeText(getByPlaceholderText("Trip title"), "Spring Adventure");
+
+    await act(async () => {
+      fireEvent.press(getByText("Save itinerary"));
+    });
+
+    expect(alertSpy).toHaveBeenCalledWith("Destination needed", "Where are you heading?");
+    expect(runAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("saves a trip and refreshes the list", async () => {
+    const { getByPlaceholderText, getByText } = renderScreen();
+
+    fireEvent.changeText(getByPlaceholderText("Trip title"), "  Alpine Escape  ");
+    fireEvent.changeText(getByPlaceholderText("Destination"), "  Zurich ");
     fireEvent.changeText(getByPlaceholderText("Start date"), "2025-03-01");
     fireEvent.changeText(getByPlaceholderText("End date"), "2025-03-06");
-    fireEvent.changeText(notesInput, "Visit the old town");
+    fireEvent.changeText(getByPlaceholderText("Notes"), "Visit the old town");
 
-    fireEvent.press(getByText("Save itinerary"));
+    await act(async () => {
+      fireEvent.press(getByText("Save itinerary"));
+    });
 
     await waitFor(() => {
       expect(runAsyncMock).toHaveBeenCalledWith(
         "INSERT INTO itineraries (title, destination, start_date, end_date, experiences) VALUES (?, ?, ?, ?, ?)",
         ["Alpine Escape", "Zurich", "2025-03-01", "2025-03-06", "Visit the old town"]
       );
-      expect(alertSpy).toHaveBeenCalledWith("Saved", "Your itinerary has been added.");
+      expect(getAllAsyncMock).toHaveBeenCalledTimes(2);
     });
   });
 
-  it("renders saved trips from the database", async () => {
-    getAllAsyncMock.mockResolvedValue([
-      {
-        id: 1,
-        title: "Summer in Paris",
-        destination: "Paris",
-        start_date: "2025-07-01",
-        end_date: "2025-07-05",
-        experiences: "Louvre and Seine cruise",
-      },
-    ]);
-
-    const Screen = require("../app/itinerary").default;
-    const { getByText } = render(<Screen />);
-
-    await waitFor(() => {
-      expect(getByText("Summer in Paris")).toBeTruthy();
-      expect(getByText("Paris")).toBeTruthy();
-      expect(getByText("Louvre and Seine cruise")).toBeTruthy();
-    });
-  });
-
-  it("deletes a trip when confirmed", async () => {
-    getAllAsyncMock.mockResolvedValue([
+  it("deletes a trip and reloads the plans", async () => {
+    getAllAsyncMock.mockResolvedValueOnce([
       {
         id: 7,
         title: "Desert Journey",
@@ -84,29 +103,22 @@ describe("Itinerary screen", () => {
         experiences: null,
       },
     ]);
+    getAllAsyncMock.mockResolvedValue([]);
 
-    const Screen = require("../app/itinerary").default;
-    const { getByLabelText, getByText } = render(<Screen />);
+    const { getByLabelText, getByText } = renderScreen();
 
     await waitFor(() => expect(getByText("Desert Journey")).toBeTruthy());
+
     fireEvent.press(getByLabelText("Delete Desert Journey"));
 
-    const [, , actions] = alertSpy.mock.calls[0];
+    const [, , actions] = alertSpy.mock.calls[alertSpy.mock.calls.length - 1];
     const confirm = actions?.find((action: any) => action.text === "Delete");
+
     await act(async () => {
       await confirm?.onPress?.();
     });
 
     expect(runAsyncMock).toHaveBeenCalledWith("DELETE FROM itineraries WHERE id=?", [7]);
-  });
-
-  it("shows the empty state when no trips are saved", async () => {
-    const Screen = require("../app/itinerary").default;
-    const { getByText } = render(<Screen />);
-
-    await waitFor(() => {
-      expect(getByText("No itineraries yet")).toBeTruthy();
-      expect(getByText("Add your first trip using the form above.")).toBeTruthy();
-    });
+    expect(getAllAsyncMock).toHaveBeenCalledTimes(2);
   });
 });

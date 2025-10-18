@@ -1,28 +1,64 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
+import { Alert } from "react-native";
 
-// ✅ Mock expo-router
 jest.mock("expo-router", () => ({
-  useLocalSearchParams: () => ({ cityId: "test-city", hotel: "Test Hotel", city: "Test City" }),
+  useLocalSearchParams: () => ({ cityId: "london", city: "London" }),
 }));
 
-// ✅ Mock db correctly (path fixed)
 jest.mock("../lib/db", () => ({
-  db: { runAsync: jest.fn() },
+  db: {
+    runAsync: jest.fn(),
+  },
 }));
 
 import BookHotel from "../app/city/[cityId]/book";
 
-describe("BookHotel screen", () => {
-  it("updates the name input when text is entered", () => {
-    const { getByPlaceholderText } = render(<BookHotel />);
-    const nameInput = getByPlaceholderText("Your name");
+const { db } = require("../lib/db");
+const runAsyncMock = db.runAsync as jest.Mock;
 
-    fireEvent.changeText(nameInput, "Aditya");
-    expect(nameInput.props.value).toBe("Aditya");
+const alertSpy = jest.spyOn(Alert, "alert");
+
+describe("BookHotel", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    alertSpy.mockImplementation(() => {});
+    runAsyncMock.mockResolvedValue(undefined);
   });
 
-  it("renders the confirm booking button", () => {
-    const { getByText } = render(<BookHotel />);
-    expect(getByText("Confirm booking")).toBeTruthy();
+  afterAll(() => {
+    alertSpy.mockRestore();
+  });
+
+  it("shows an alert when details are missing", async () => {
+    const { getByPlaceholderText, getByText } = render(<BookHotel />);
+
+    fireEvent.changeText(getByPlaceholderText("Your address"), "221B Baker Street");
+    fireEvent.changeText(getByPlaceholderText("Start date (YYYY-MM-DD)"), "2025-09-10");
+
+    await act(async () => {
+      fireEvent.press(getByText("Confirm booking"));
+    });
+
+    expect(alertSpy).toHaveBeenCalledWith("⚠️ Missing Info", "Please fill all fields before booking.");
+    expect(runAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("saves a booking when the form is complete", async () => {
+    const { getByPlaceholderText, getByText } = render(<BookHotel />);
+
+    fireEvent.changeText(getByPlaceholderText("Your name"), "Alice");
+    fireEvent.changeText(getByPlaceholderText("Your address"), "1 Infinite Loop");
+    fireEvent.changeText(getByPlaceholderText("Start date (YYYY-MM-DD)"), "2025-05-01");
+    fireEvent.changeText(getByPlaceholderText("End date (YYYY-MM-DD)"), "2025-05-05");
+
+    await act(async () => {
+      fireEvent.press(getByText("Confirm booking"));
+    });
+
+    expect(runAsyncMock).toHaveBeenCalledWith(
+      "INSERT INTO bookings (hotel_name, city, customer_name, customer_address, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
+      ["CityHop Stay Hotel", "london", "Alice", "1 Infinite Loop", "2025-05-01", "2025-05-05"]
+    );
+    expect(alertSpy).toHaveBeenCalledWith("✅ Success", "Booking confirmed!");
   });
 });
